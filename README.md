@@ -1,4 +1,5 @@
 # Moduler
+<<<<<<< HEAD
 
 A Lua library for [MoonLoader](https://blast.hk/moonloader/) that allows you to split your SA-MP scripts into organized, reusable modules and submodules without changing your code structure.
 
@@ -168,3 +169,6 @@ local sendThroughCommand = false -- Use a chat command for passing the load requ
 
 - For using the minified versions, consider renaming `moduler.min.lua` and `moduler_loader.min.lua` to `moduler.lua` and `moduler_loader.lua` before usage.
 - Added a modified version of `SF Integration.lua` in the repo, in case you been using that, and the error used for force killing the caller script was annoying (In old method with forceKill as true)
+=======
+moduler library for splitting lua scripts (SAMP-Moonloader) into the modules and load them anywhere, with no need for changing the structure
+>>>>>>> d55f3bc98fb87a7910548f3c3c5b7e0a0e58a9c3
