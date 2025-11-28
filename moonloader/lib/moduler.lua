@@ -7,7 +7,7 @@
 local useRuntimeMethod = false
 
 ------------------------------
--- Only for old method:
+-- Only for default method:
 
 local forceKill = true
 local sendThroughCommand = false
