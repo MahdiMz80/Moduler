@@ -1,10 +1,10 @@
 -- moduler library for splitting scripts into the modules and load them anywhere, with no need for changing the structure
 -- Made by MahdiMz
 -- https://github.com/MahdiMz80/Moduler
--- v2.0
+-- v2.2
 
 --=================================
-local useOldMethod = false
+local useRuntimeMethod = false
 
 ------------------------------
 -- Only for old method:
@@ -22,7 +22,7 @@ function loadModuler()
 		if fOk then loader_path = _loader_path end
 	end
 end
-if useOldMethod then
+if not useRuntimeMethod then
 	loader_path = getLoaderPath()
 	if not loader_path then loadModuler() end
 	assert(loader_path, "Cannot load the moduler loader script.")
@@ -36,45 +36,19 @@ function noExt(str) str = str:gsub("%.+", ".") if str:lower():match("%.luac$") t
 function printErr(msg) print("{ff7070}(error): {c0c0c0}"..msg) end
 
 function extractSubmodule(moduleContent, subModule)
-	local patterns = {"local%s+function%s+"..subModule.."%s*%b()", "function%s+"..subModule.."%s*%b()", "local%s+"..subModule.."%s*=%s*function%s*%b()", subModule.."%s*=%s*function%s*%b()"}
-
-	local funcStart
-	for _, pat in ipairs(patterns) do funcStart = moduleContent:find(pat) if funcStart then break end end
+	moduleContent = moduleContent:gsub("\r\n", "\n"):gsub("\r", "\n")
+	local marker = "%-%-%s*[Mm]oduler:%s*"..subModule.."%s*\n"
 	
-	if not funcStart then return nil end
-
-	local bodyStart = moduleContent:find("%b()", funcStart)
-	if not bodyStart then return nil end
-	local _, bodyStart = moduleContent:find("%b()", funcStart)
-	bodyStart = bodyStart + 1
-
-	local pos, depth, foundFunction = funcStart, 0, false
+	local startPos, startEnd = moduleContent:find("^" .. marker)
+	if not startPos then startPos, startEnd = moduleContent:find("\n" .. marker) end
+	if not startPos then return nil end
 	
-	while pos <= #moduleContent do
-		local word, wordEnd = moduleContent:match("^([%a_][%w_]*)()", pos)
-		
-		if word then
-			if word == "function" or word == "do" or word == "if" or word == "for" or word == "while" or word == "repeat" then
-				depth = depth + 1 if word == "function" then foundFunction = true end pos = wordEnd
-			elseif word == "end" then
-				if foundFunction then
-					depth = depth - 1
-					if depth == 0 then
-						local body = moduleContent:sub(bodyStart, pos - 1):match("^[\r\n]*(.-)[ \t\r\n]*$") return body
-					end
-				end
-				pos = wordEnd
-			elseif word == "until" then
-				depth = depth - 1 pos = wordEnd
-			else
-				pos = wordEnd
-			end
-		else
-			pos = pos + 1
-		end
-	end
+	local contentStart = startEnd + 1
+	local endPos = moduleContent:find("\n%-%-%s*[Mm]oduler:%s*[_%w]+%s*\n", contentStart)
 	
-	return nil
+	local extracted = moduleContent:sub(contentStart, endPos and (endPos - 1) or #moduleContent)
+	extracted = extracted:gsub("^\n+", ""):gsub("\n+$", "")
+	return extracted
 end
 
 function findModulerCalls(content)
@@ -90,10 +64,20 @@ function findModulerCalls(content)
 			lineStart = lineStart - 1
 		end
 		
-		local lineFromStart = content:sub(lineStart)
-		local indent = lineFromStart:match('^([ \t]*)')
+		local lineFromStart = content:sub(lineStart, callStart - 1)
+		local isCommented = false
 		
-		table.insert(calls, {module = module, indent = indent})
+		if lineFromStart:match("^%s*%-%-") then isCommented = true end
+		
+		local beforeCall = content:sub(1, callStart - 1)
+		local blockCommentStart = beforeCall:match(".*()%-%-%[%[")
+		if blockCommentStart then
+			local blockCommentEnd = content:find("%]%]", blockCommentStart)
+			if not blockCommentEnd or blockCommentEnd > callStart then isCommented = true end
+		end
+		
+		if not isCommented then local indent = lineFromStart:match('^([ \t]*)') table.insert(calls, {module = module, indent = indent}) end
+		
 		pos = callEnd + 1
 	end
 	
@@ -102,7 +86,7 @@ end
 
 function applyIndentation(code, indent)
 	local lines = {}
-	for line in code:gmatch("[^\r\n]+") do table.insert(lines, line) end
+	for line in (code.."\n"):gmatch("([^\r\n]*)\r?\n") do table.insert(lines, line) end
 	
 	if #lines > 0 then
 		local minIndent = nil
@@ -211,26 +195,26 @@ function build(scr)
 		
 		table.insert(injections, {
 			marker = 'moduler%s*%(%s*["\']'..moduleCall:gsub("%.", "%%%.")..'["\']%s*%)',
-			code = string.format("--[[START OF MODULER: %s]]\n%s\n%s--[[END OF MODULER: %s]]", moduleCall, indentedCode, indent, moduleCall)
+			code = "--[[START OF MODULER: "..moduleCall.."]]\n"..indentedCode:gsub("%%", "%%%%").."\n"..indent.."--[[END OF MODULER: "..moduleCall.."]]"
 		})
 
 		if not EXPORTS[moduleCall] then EXPORTS[moduleCall] = codeToInject end
 	end
+
+	scrContent = scrContent:gsub('require%s*%(%s*["\']moduler["\']%s*%)', '-- require("moduler") removed')
 	
 	for _, injection in ipairs(injections) do
 		scrContent = scrContent:gsub(injection.marker, injection.code)
 	end
-
-	scrContent = scrContent:gsub('require%s*%(%s*["\']moduler["\']%s*%)', '-- require("moduler") removed')
-	
-	local finalChunk, finalErr = loadstring(scrContent, scr..".lua")
-	if not finalChunk then printErr(string.format('Syntax error in built script "%s": %s', scr, finalErr)) return false end
 
 	local finalFilePath = parent.."\\"..scr.."_moduler.lua"
 	local finalFile = io.open(finalFilePath, "wb")
 	if not finalFile then printErr("Error writing the built script: "..scr) return false end
 	finalFile:write(scrContent)
 	finalFile:close()
+
+	local finalChunk, finalErr = loadstring(scrContent, scr..".lua")
+	if not finalChunk then printErr(string.format('Syntax error in built script "%s": %s', scr, finalErr)) return false end
 
 	for moduleCall, rawCode in pairs(EXPORTS) do
 		local chunk, err = loadstring(rawCode, "@"..moduleCall)
@@ -286,7 +270,7 @@ if not callerScript then error("Cannot get the name of the caller script.") end
 
 _G.moduler = function() end
 
-if not useOldMethod then
+if useRuntimeMethod then
 	local buildOk = build(callerScript)
 	if not buildOk then error("Failed to build the final script.") end
 	_G.moduler = load
@@ -294,15 +278,15 @@ else
 	local thisScr = thisScript()
 	local code = ""
 	if sendThroughCommand then
-		code = string.format([[
+		code = string.format([=[
 		lua_thread.create(function()
 			wait(100)
 			sampProcessChatInput("/moduler ".."%s")
 			thisScript():unload()
 		end)
-		]], thisScr.name)
+		]=], thisScr.name)
 	else
-		code = string.format([[
+		code = string.format([=[
 		require 'lib.moonloader'
 		local moduler = import '%s'
 		lua_thread.create(function()
@@ -310,7 +294,7 @@ else
 			moduler.load("%s")
 			thisScript():unload()
 		end)
-		]], loader_path:gsub("\\", "\\\\"), thisScr.name)
+		]=], loader_path:gsub("\\", "\\\\"), thisScr.name)
 	end
 	local tmp = os.tmpname().."_moduler_requestload.lua"
 	local f = io.open(tmp, "wb")

@@ -15,45 +15,19 @@ function printErr(msg) print("{ff7070}(error): {c0c0c0}"..msg) end
 function isScrLoaded(scr) for i, s in pairs(script.list()) do if noExt(s.name:lower():trim()) == noExt(scr:lower():trim()) then return s end end return false end
 
 function extractSubmodule(moduleContent, subModule)
-	local patterns = {"local%s+function%s+"..subModule.."%s*%b()", "function%s+"..subModule.."%s*%b()", "local%s+"..subModule.."%s*=%s*function%s*%b()", subModule.."%s*=%s*function%s*%b()"}
-
-	local funcStart
-	for _, pat in ipairs(patterns) do funcStart = moduleContent:find(pat) if funcStart then break end end
+	moduleContent = moduleContent:gsub("\r\n", "\n"):gsub("\r", "\n")
+	local marker = "%-%-%s*[Mm]oduler:%s*"..subModule.."%s*\n"
 	
-	if not funcStart then return nil end
-
-	local bodyStart = moduleContent:find("%b()", funcStart)
-	if not bodyStart then return nil end
-	local _, bodyStart = moduleContent:find("%b()", funcStart)
-	bodyStart = bodyStart + 1
-
-	local pos, depth, foundFunction = funcStart, 0, false
+	local startPos, startEnd = moduleContent:find("^" .. marker)
+	if not startPos then startPos, startEnd = moduleContent:find("\n" .. marker) end
+	if not startPos then return nil end
 	
-	while pos <= #moduleContent do
-		local word, wordEnd = moduleContent:match("^([%a_][%w_]*)()", pos)
-		
-		if word then
-			if word == "function" or word == "do" or word == "if" or word == "for" or word == "while" or word == "repeat" then
-				depth = depth + 1 if word == "function" then foundFunction = true end pos = wordEnd
-			elseif word == "end" then
-				if foundFunction then
-					depth = depth - 1
-					if depth == 0 then
-						local body = moduleContent:sub(bodyStart, pos - 1):match("^[\r\n]*(.-)[ \t\r\n]*$") return body
-					end
-				end
-				pos = wordEnd
-			elseif word == "until" then
-				depth = depth - 1 pos = wordEnd
-			else
-				pos = wordEnd
-			end
-		else
-			pos = pos + 1
-		end
-	end
+	local contentStart = startEnd + 1
+	local endPos = moduleContent:find("\n%-%-%s*[Mm]oduler:%s*[_%w]+%s*\n", contentStart)
 	
-	return nil
+	local extracted = moduleContent:sub(contentStart, endPos and (endPos - 1) or #moduleContent)
+	extracted = extracted:gsub("^\n+", ""):gsub("\n+$", "")
+	return extracted
 end
 
 function findModulerCalls(content)
@@ -69,10 +43,20 @@ function findModulerCalls(content)
 			lineStart = lineStart - 1
 		end
 		
-		local lineFromStart = content:sub(lineStart)
-		local indent = lineFromStart:match('^([ \t]*)')
+		local lineFromStart = content:sub(lineStart, callStart - 1)
+		local isCommented = false
 		
-		table.insert(calls, {module = module, indent = indent})
+		if lineFromStart:match("^%s*%-%-") then isCommented = true end
+		
+		local beforeCall = content:sub(1, callStart - 1)
+		local blockCommentStart = beforeCall:match(".*()%-%-%[%[")
+		if blockCommentStart then
+			local blockCommentEnd = content:find("%]%]", blockCommentStart)
+			if not blockCommentEnd or blockCommentEnd > callStart then isCommented = true end
+		end
+		
+		if not isCommented then local indent = lineFromStart:match('^([ \t]*)') table.insert(calls, {module = module, indent = indent}) end
+		
 		pos = callEnd + 1
 	end
 	
@@ -81,7 +65,7 @@ end
 
 function applyIndentation(code, indent)
 	local lines = {}
-	for line in code:gmatch("[^\r\n]+") do table.insert(lines, line) end
+	for line in (code.."\n"):gmatch("([^\r\n]*)\r?\n") do table.insert(lines, line) end
 	
 	if #lines > 0 then
 		local minIndent = nil
@@ -193,18 +177,15 @@ function build(scr)
 		
 		table.insert(injections, {
 			marker = 'moduler%s*%(%s*["\']'..moduleCall:gsub("%.", "%%%.")..'["\']%s*%)',
-			code = string.format("--[[START OF MODULER: %s]]\n%s\n%s--[[END OF MODULER: %s]]", moduleCall, indentedCode, indent, moduleCall)
+			code = "--[[START OF MODULER: "..moduleCall.."]]\n"..indentedCode:gsub("%%", "%%%%").."\n"..indent.."--[[END OF MODULER: "..moduleCall.."]]"
 		})
-	end
-	
-	for _, injection in ipairs(injections) do
-		scrContent = scrContent:gsub(injection.marker, injection.code)
 	end
 
 	scrContent = scrContent:gsub('require%s*%(%s*["\']moduler["\']%s*%)', '-- require("moduler") removed')
 	
-	local finalChunk, finalErr = loadstring(scrContent, scr..".lua")
-	if not finalChunk then printErr(string.format('Syntax error in built script "%s": %s', scr, finalErr)) return false end
+	for _, injection in ipairs(injections) do
+		scrContent = scrContent:gsub(injection.marker, injection.code)
+	end
 
 	local finalFilePath = parent.."\\"..scr.."_moduler.lua"
 	local finalFile = io.open(finalFilePath, "wb")
@@ -212,10 +193,13 @@ function build(scr)
 	finalFile:write(scrContent)
 	finalFile:close()
 
+	local finalChunk, finalErr = loadstring(scrContent, scr..".lua")
+	if not finalChunk then printErr(string.format('Syntax error in built script "%s": %s', scr, finalErr)) return false end
+
 	local finalOk, finalExecErr = pcall(function() script.load(finalFilePath) end)
 	if not finalOk then printErr("Error loading the built "..scr..": "..finalExecErr) return false end
 
-	print('{44bbff}Moduler: {c0c0c0}Successfully built and loaded "'..scr..'"')
+	-- print('{44bbff}Moduler: {c0c0c0}Successfully built and loaded "'..scr..'"')
 	return true
 end
 
