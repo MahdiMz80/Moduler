@@ -3,7 +3,7 @@
 A Lua library for [MoonLoader](https://blast.hk/moonloader/) that allows you to split your SA-MP scripts into organized, reusable modules and submodules without changing your code structure.
 
 - **Split scripts into modules** - Organize your code into separate files
-- **Submodule support** - Extract specific submodules from modules, specified by `-- Moduler: submodule_name` before its content
+- **Submodule support** - Extract specific submodules from modules, specified by `-- Moduler: submodule_name` before their contents
 - **Two loading methods** - Choose between traditional file-based loading or runtime loading
 - **Build file generation** - Creates readable merged script
 
