@@ -13,7 +13,7 @@ A Lua library for [MoonLoader](https://blast.hk/moonloader/) that allows you to 
 moonloader/
 ├── lib/
 │   ├── moduler.lua
-│   └── moduler_loader.lua (optional)
+│   └── moduler_loader.lua
 ├── moduler/
 │   └── YourScript/
 │       ├── module1.lua
