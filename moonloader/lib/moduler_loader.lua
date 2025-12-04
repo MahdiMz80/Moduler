@@ -18,8 +18,8 @@ function extractSubmodule(moduleContent, subModule)
 	moduleContent = moduleContent:gsub("\r\n", "\n"):gsub("\r", "\n")
 	local marker = "%-%-%s*[Mm]oduler:%s*"..subModule.."%s*\n"
 	
-	local startPos, startEnd = moduleContent:find("^" .. marker)
-	if not startPos then startPos, startEnd = moduleContent:find("\n" .. marker) end
+	local startPos, startEnd = moduleContent:find("^"..marker)
+	if not startPos then startPos, startEnd = moduleContent:find("\n"..marker) end
 	if not startPos then return nil end
 	
 	local contentStart = startEnd + 1
@@ -32,32 +32,40 @@ end
 
 function findModulerCalls(content)
 	local calls = {}
-	local pos = 1
 	
+	local blockComments = {}
+	local pos = 1
 	while true do
-		local callStart, callEnd, module = content:find('moduler%s*%(%s*["\']([^"\']+)["\']%s*%)', pos)
-		if not callStart then break end
-		
-		local lineStart = callStart
-		while lineStart > 1 and content:sub(lineStart - 1, lineStart - 1):match('[^\r\n]') do
-			lineStart = lineStart - 1
+		local startPos = content:find("%-%-%[%[", pos)
+		if not startPos then break end
+		local endPos = content:find("%]%]", startPos + 4)
+		if endPos then
+			table.insert(blockComments, {s = startPos, e = endPos + 1})
+			pos = endPos + 2
+		else
+			break
 		end
-		
-		local lineFromStart = content:sub(lineStart, callStart - 1)
-		local isCommented = false
-		
-		if lineFromStart:match("^%s*%-%-") then isCommented = true end
-		
-		local beforeCall = content:sub(1, callStart - 1)
-		local blockCommentStart = beforeCall:match(".*()%-%-%[%[")
-		if blockCommentStart then
-			local blockCommentEnd = content:find("%]%]", blockCommentStart)
-			if not blockCommentEnd or blockCommentEnd > callStart then isCommented = true end
+	end
+	
+	local function isInBlockComment(p)
+		for _, bc in ipairs(blockComments) do
+			if p >= bc.s and p <= bc.e then return true end
 		end
+		return false
+	end
+	
+	for match, module in content:gmatch('(moduler%s*%(%s*["\']([^"\']+)["\']%s*%))') do
+		local callStart = content:find(match, 1, true)
 		
-		if not isCommented then local indent = lineFromStart:match('^([ \t]*)') table.insert(calls, {module = module, indent = indent}) end
-		
-		pos = callEnd + 1
+		if callStart and not isInBlockComment(callStart) then
+			local lineStart = content:sub(1, callStart):match(".*\n()") or 1
+			local linePrefix = content:sub(lineStart, callStart - 1)
+			
+			if not linePrefix:match("^%s*%-%-") then
+				local indent = linePrefix:match('^([ \t]*)')
+				table.insert(calls, {module = module, indent = indent or ""})
+			end
+		end
 	end
 	
 	return calls
