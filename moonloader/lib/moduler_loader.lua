@@ -4,6 +4,7 @@ script_author("MahdiMz")
 script_url("https://github.com/MahdiMz80/Moduler")
 
 local loadTryMax = 2
+local extraFileWithNoModulerComments = true
 
 function string:trim() return self:match("^%s*(.-)%s*$") end
 function noExt(str) str = str:gsub("%.+", ".") if str:lower():match("%.luac$") then str = str:sub(1, -6) elseif str:lower():match("%.lua$") then str = str:sub(1, -5) end return str end
@@ -154,6 +155,10 @@ function build(scr)
 			end
 			module = parts[1]
 			subModule = #parts == 2 and parts[2]:trim() or nil
+			if subModule and (subModule:match("%[") or subModule:match("%]")) then
+				printErr(string.format('Submodule "%s" in module "%s" in script "%s" has an invalid name.', subModule, module, scr))
+				return false
+			end
 		end
 		
 		local modulePath = folder.."/"..module..".lua"
@@ -203,6 +208,16 @@ function build(scr)
 
 	local finalChunk, finalErr = loadstring(scrContent, scr..".lua")
 	if not finalChunk then printErr(string.format('Syntax error in built script "%s": %s', scr, finalErr)) return false end
+
+	if extraFileWithNoModulerComments then
+		local noCommentFilePath = parent.."\\"..scr.."_moduler_NoModulerComment.lua"
+		local noCommentFile = io.open(noCommentFilePath, "wb")
+		if not noCommentFile then printErr("Error writing the built script without moduler comments: "..scr) return false end
+		-- local noCommentScrContent = scrContent:gsub("%-%-%[%[START OF MODULER: [^%]%]]+%]%]\n", "\n"):gsub("%-%-%[%[END OF MODULER: [^%]%]]+%]%]", "")
+		local noCommentScrContent = scrContent:gsub("\n[ \t]*%-%-%[%[START OF MODULER: [^%]%]]+%]%]\n", "\n"):gsub("([ \t]*)%-%-%[%[START OF MODULER: [^%]%]]+%]%]\n", "%1"):gsub("\n[ \t]*%-%-%[%[END OF MODULER: [^%]%]]+%]%]", "")
+		noCommentFile:write(noCommentScrContent)
+		noCommentFile:close()
+	end
 
 	local finalOk, finalExecErr = pcall(function() script.load(finalFilePath) end)
 	if not finalOk then printErr("Error loading the built "..scr..": "..finalExecErr) return false end
