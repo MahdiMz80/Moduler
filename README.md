@@ -140,6 +140,12 @@ At the top of `moduler.lua`, you can configure the loading method:
 local useRuntimeMethod = false  -- Set to true for runtime loading (Not recommended)
 ```
 
+Enable the option below to save an extra file with no Moduler comments.<br>
+(Needs to be configured separately in `moduler_loader.lua` for default method.)
+```lua
+local extraFileWithNoModulerComments = true
+```
+
 ### Default Method
 - Creates a merged script file
 - Unloads your script and reloads from the final built file in `moonloader/moduler`
