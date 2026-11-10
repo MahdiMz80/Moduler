@@ -1,7 +1,7 @@
 -- moduler library for splitting scripts into the modules and load them anywhere, with no need for changing the structure
 -- Made by MahdiMz
 -- https://github.com/MahdiMz80/Moduler
--- v2.2
+-- v2.4
 
 --=================================
 local useRuntimeMethod = false
@@ -154,7 +154,7 @@ function build(scr)
 		return true
 	end
 	
-	print('{44bbff}Moduler: {c0c0c0}Building "'..scr..'" with '..#modulerCalls..' module calls...')
+	print('{44bbff}Moduler: {c0c0c0}Building "'..scr..'" with '..#modulerCalls..' (sub)module calls...')
 	
 	EXPORTS = {}
 	
@@ -304,6 +304,7 @@ else
 		code = string.format([=[
 		lua_thread.create(function()
 			wait(100)
+			pcall(os.remove, thisScript().path)
 			sampProcessChatInput("/moduler ".."%s")
 			thisScript():unload()
 		end)
@@ -314,6 +315,7 @@ else
 		local moduler = import '%s'
 		lua_thread.create(function()
 			wait(100)
+			pcall(os.remove, thisScript().path)
 			moduler.load("%s")
 			thisScript():unload()
 		end)
@@ -321,6 +323,7 @@ else
 	end
 	local tmp = os.tmpname().."_moduler_requestload.lua"
 	local f = io.open(tmp, "wb")
+	if not f then error("Cannot write temp loader") end
 	f:write(code)
 	f:close()
 	local fOk, fErr = pcall(function() script.load(tmp) end)

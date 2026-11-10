@@ -3,8 +3,35 @@ script_description("moduler loader")
 script_author("MahdiMz")
 script_url("https://github.com/MahdiMz80/Moduler")
 
+local ffi = require 'ffi'
+pcall(ffi.cdef, [[
+	typedef void* HANDLE;
+	typedef unsigned long DWORD;
+	typedef int BOOL;
+	typedef struct _FILETIME { DWORD dwLowDateTime; DWORD dwHighDateTime; } FILETIME;
+	BOOL __stdcall GetFileTime(HANDLE, FILETIME*, FILETIME*, FILETIME*);
+	HANDLE __stdcall CreateFileA(const char*, DWORD, DWORD, void*, DWORD, DWORD, HANDLE);
+	BOOL __stdcall CloseHandle(HANDLE);
+]])
+
 local loadTryMax = 2
 local extraFileWithNoModulerComments = true
+
+local checkInterval = 5
+local tabGap = 2
+
+local watched = {}
+local failed = {}
+
+function mtime(path)
+	local h = ffi.C.CreateFileA(path, 0x80000000, 3, nil, 3, 0x80, nil)
+	if tonumber(ffi.cast("intptr_t", h)) == -1 then return nil end
+	local ft = ffi.new("FILETIME[1]")
+	local ok = ffi.C.GetFileTime(h, nil, nil, ft)
+	ffi.C.CloseHandle(h)
+	if ok == 0 then return nil end
+	return tonumber(ft[0].dwHighDateTime) * 4294967296 + tonumber(ft[0].dwLowDateTime)
+end
 
 function string:trim() return self:match("^%s*(.-)%s*$") end
 function noExt(str) str = str:gsub("%.+", ".") if str:lower():match("%.luac$") then str = str:sub(1, -6) elseif str:lower():match("%.lua$") then str = str:sub(1, -5) end return str end
@@ -115,6 +142,8 @@ function build(scr)
 	
 	if not doesFileExist(scrPath) then printErr('Script "'..scr..'.lua" not found') return false end
 
+	local deps = {[scrPath] = mtime(scrPath)}
+
 	local scrFile = io.open(scrPath, "rb")
 	if not scrFile then printErr("Error opening script: "..scr) return false end
 
@@ -127,7 +156,7 @@ function build(scr)
 	if scrHeader == "\27Lua" or scrHeader == "\27LJ" then printErr(string.format('Script "%s" not supported as it is compiled. Use plain lua script.', scr)) return false end
 	
 	local modulerCalls = findModulerCalls(scrContent)
-	
+
 	if #modulerCalls == 0 then
 		print('No moduler() calls found in "'..scr..'"')
 		local chunk, err = loadstring(scrContent, scr..".lua")
@@ -138,7 +167,7 @@ function build(scr)
 		return true
 	end
 	
-	print('{44bbff}Moduler: {c0c0c0}Building "'..scr..'" with '..#modulerCalls..' module calls...')
+	print('{44bbff}Moduler: {c0c0c0}Building "'..scr..'" with '..#modulerCalls..' (sub)module calls...')
 	
 	local injections = {}
 	for _, callInfo in ipairs(modulerCalls) do
@@ -164,6 +193,8 @@ function build(scr)
 		local modulePath = folder.."/"..module..".lua"
 		if not doesFileExist(modulePath) then printErr(string.format('Module "%s" not found for script "%s"', module, scr)) return false end
 
+		deps[modulePath] = mtime(modulePath)
+
 		local moduleFile = io.open(modulePath, "rb")
 		if not moduleFile then printErr(string.format('Error opening module "%s" for script "%s"', module, scr)) return false end
 
@@ -174,7 +205,7 @@ function build(scr)
 		local moduleHeader = moduleContent:sub(1,4)
 		if not moduleHeader then printErr(string.format('No header found in module "%s" for script "%s"', module, scr)) return false end
 		if moduleHeader == "\27Lua" or moduleHeader == "\27LJ" then printErr(string.format('Module "%s" for script "%s" not supported as it is compiled. Use plain lua module.', module, scr)) return false end
-		
+
 		local codeToInject
 		if subModule then
 			codeToInject = extractSubmodule(moduleContent, subModule)
@@ -222,6 +253,9 @@ function build(scr)
 	local finalOk, finalExecErr = pcall(function() script.load(finalFilePath) end)
 	if not finalOk then printErr("Error loading the built "..scr..": "..finalExecErr) return false end
 
+	watched[scr] = deps
+	failed[scr] = nil
+
 	-- print('{44bbff}Moduler: {c0c0c0}Successfully built and loaded "'..scr..'"')
 	return true
 end
@@ -261,6 +295,26 @@ function load(scr)
 	return _load(scr)
 end
 
+function checkChanged()
+	for scr, deps in pairs(watched) do
+		local changed = false
+		for path, old in pairs(deps) do
+			local t = mtime(path)
+			if t and t ~= old then deps[path] = t changed = true end
+		end
+		if changed then
+			if isScrLoaded(scr) or failed[scr] then
+				failed[scr] = true
+				print('{44bbff}Moduler: {c0c0c0}Change detected. Rebuilding "'..scr..'"')
+				load(scr)
+			else
+				watched[scr] = nil
+				failed[scr] = nil
+			end
+		end
+	end
+end
+
 function main()
 	if not isSampLoaded() or not isSampfuncsLoaded() then return end
 	while not isSampAvailable() do wait(0) end
@@ -268,10 +322,61 @@ function main()
 	sampRegisterChatCommand("moduler", function(scr)
 		local scr = scr and noExt(scr:trim()) or nil
 		if not scr or scr == "" or scr:lower() == "moduler" then return false end
+		if watched[scr] then watched[scr] = nil end
 		load(scr)
 	end)
-	
-	while true do wait(0) end
+
+	sampRegisterChatCommand("modulerlist", function()
+		local scrCount = 0
+		for scr, deps in pairs(watched) do
+			scrCount = scrCount + 1
+			print("--------------------")
+			print("Script: "..scr)
+			local moduleCount = 0
+			local root = getWorkingDirectory()
+			for path, old in pairs(deps) do
+				local mName = path
+				if mName:sub(1, #root):lower() == root:lower() then mName = mName:sub(#root + 1) end
+				mName = mName:gsub("^[\\/]", ""):gsub("^moduler/", "")
+				local pTitle = "Module:"
+				if mName:lower() == scr:lower()..".lua" then
+					pTitle = "Parent:"
+				else
+					moduleCount = moduleCount + 1
+					mName = mName:sub(#scr + 2)
+				end
+				print(string.format("%s %s, T: %.0f", pTitle, mName, old))
+
+				-- local mName = path:gsub("^"..getWorkingDirectory(), ""):gsub("^/", ""):gsub("^moduler/", "")
+				-- local pTitle = "Module:"
+				-- if mName:lower():match("^"..scr:lower().."%.luac?") then
+				-- 	pTitle = "Parent:"
+				-- else
+				-- 	moduleCount = moduleCount + 1
+				-- 	mName = mName:gsub("^"..scr.."/", "")
+				-- end
+				-- print(string.format("%s %s, T: %.2f", pTitle, mName, old))
+			end
+			print("Total Modules: "..moduleCount)
+			print("--------------------")
+		end
+		if scrCount ~= 0 then
+			print("Total Scripts: "..scrCount)
+		end
+		sampAddChatMessage("Total Scripts: "..scrCount..(scrCount ~= 0 and ". {bbbbbb}Check sampfuncs console prints for details." or ""), -1)
+	end)
+
+	local last = os.clock()
+	local lastCheck = last
+	while true do
+		wait(1000)
+		local now = os.clock()
+		if now - last > tabGap or now - lastCheck >= checkInterval then
+			lastCheck = now
+			checkChanged()
+		end
+		last = now
+	end
 end
 
 EXPORTS = {
